@@ -90,9 +90,6 @@ class ChatRoomScreen extends ConsumerWidget {
     return Scaffold(
       body: Chat(
         user: me,
-        customMessageBuilder: (p0, {required messageWidth}) {
-          return const Text('a');
-        },
         messages: messages,
         onSendPressed: (a) {
           ref.read(messagesNotifier.notifier).ask(a.text);
