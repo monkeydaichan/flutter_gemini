@@ -4,6 +4,7 @@ import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:uuid/uuid.dart';
 
 final googleAIStudioAPIKey = dotenv.get('GOOGLE_AI_STUDIO_KEY');
 
@@ -19,19 +20,58 @@ class MessagesNotifier extends StateNotifier<List<types.Message>> {
 
   late final ChatSession chat;
 
-  void addMessage(types.User author, String text) {
-    final timeStamp = DateTime.now().millisecondsSinceEpoch.toString();
-    final message = types.TextMessage(author: author, id: timeStamp, text: text);
-    state = [message, ...state];
+  Stream<GenerateContentResponse>? responseStream;
+
+  String get messageId => const Uuid().v4();
+  bool _chatting = false;
+
+  void startChatting() {
+    if (_chatting) return;
+
+    _chatting = true;
+    final id = messageId;
+    responseStream?.listen(
+      (GenerateContentResponse message) {
+        final textMessage = message.text ?? '';
+        if (state.any((m) => m.id == id)) {
+          editMessage(id, textMessage);
+        } else {
+          addMessage(gemini, textMessage, id: id);
+        }
+      },
+      onError: (error) {
+        addMessage(gemini, 'Please try again later.');
+      },
+      onDone: () {
+        _chatting = false;
+      },
+    );
   }
 
-  Future<void> askGemini(String question) async {
+  String addMessage(types.User author, String text, {String? id}) {
+    id = id ?? messageId;
+    final message = types.TextMessage(author: author, id: id, text: text);
+    state = [message, ...state];
+    return id;
+  }
+
+  void editMessage(String messageId, String newText) {
+    final List<types.Message> updatedMessages = state.map((message) {
+      if (message.id == messageId && message is types.TextMessage) {
+        return message.copyWith(text: message.text + newText);
+      }
+      return message;
+    }).toList();
+
+    state = updatedMessages;
+  }
+
+  Future<void> ask(String question) async {
     addMessage(me, question);
     final content = Content.text(question);
     try {
-      final response = await chat.sendMessage(content);
-      final message = response.text ?? 'Retry later...';
-      addMessage(gemini, message);
+      responseStream = chat.sendMessageStream(content);
+      startChatting();
     } on Exception {
       addMessage(gemini, 'Retry later...');
     }
@@ -50,9 +90,12 @@ class ChatRoomScreen extends ConsumerWidget {
     return Scaffold(
       body: Chat(
         user: me,
+        customMessageBuilder: (p0, {required messageWidth}) {
+          return const Text('a');
+        },
         messages: messages,
         onSendPressed: (a) {
-          ref.read(messagesNotifier.notifier).askGemini(a.text);
+          ref.read(messagesNotifier.notifier).ask(a.text);
         },
       ),
     );
